@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Silence Game</title>
+<style>
+  /* ===== Design tokens: chalkboard classroom ===== */
+  :root {
+    --board: #12302b;      /* chalkboard green */
+    --board-2: #1b4540;    /* raised panels */
+    --chalk: #f7f5ee;      /* chalk white */
+    --chalk-dim: #9fb8b1;
+    --red: #ff6b5e;        /* strike-through chalk */
+    --yellow: #ffd84a;     /* highlights and focus */
+    --ink: #12302b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--board); color: var(--chalk);
+    font-family: "Trebuchet MS", Verdana, "Segoe UI", sans-serif;
+    font-size: 22px; line-height: 1.35; min-height: 100vh;
+    display: flex; flex-direction: column; gap: 18px; padding: 18px 24px;
+  }
+  :focus-visible { outline: 4px solid var(--yellow); outline-offset: 3px; }
+
+  /* ===== Header: title, timer, controls ===== */
+  header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
+  h1 { margin: 0; font-size: 2rem; letter-spacing: .02em; }
+  #timer { font-size: 3.4rem; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 5.2ch; }
+  #timer.low { color: var(--red); }
+  #timer.paused { color: var(--yellow); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; }
+  button {
+    font: inherit; font-weight: 700; cursor: pointer; color: var(--ink); background: var(--chalk);
+    border: 3px solid var(--chalk); border-radius: 12px; padding: 10px 20px;
+  }
+  button.secondary { background: transparent; color: var(--chalk); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* ===== Letter tiles ===== */
+  #letters { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
+  .tile {
+    position: relative; width: 96px; height: 116px; font-size: 4.2rem; padding: 0;
+    background: var(--chalk); color: var(--ink); border-radius: 14px;
+  }
+  .tile::after { /* the strike-through bar, in a different color than the letter */
+    content: ""; position: absolute; left: 6px; right: 6px; top: 50%; height: 10px; margin-top: -5px;
+    background: var(--red); border-radius: 5px; transform: rotate(-8deg) scaleX(0); transition: transform .2s;
+  }
+  .tile.marked { background: var(--board-2); color: var(--chalk-dim); border-color: var(--chalk-dim); text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 8px; }
+  .tile.marked::after { transform: rotate(-8deg) scaleX(1); }
+  .hint { text-align: center; color: var(--chalk-dim); font-size: .85rem; margin: 0; }
+
+  /* ===== Hangman drawing ===== */
+  #stage { display: flex; justify-content: center; }
+  #hangman { width: min(300px, 70vw); height: auto; max-height: 36vh; }
+  #hangman line, #hangman circle, #hangman path { stroke: var(--chalk); stroke-width: 6; stroke-linecap: round; fill: none; }
+  #hangman .part { opacity: 0; transition: opacity .3s; }
+  #hangman .part.show { opacity: 1; }
+  #hangman .face path { stroke: var(--red); stroke-width: 4; }
+
+  /* ===== Name list ===== */
+  #log-wrap { background: var(--board-2); border-radius: 14px; padding: 14px 20px; border: 3px dashed var(--chalk-dim); }
+  #log-wrap h2 { margin: 0 0 6px; font-size: 1.2rem; }
+  #log { margin: 0; padding-left: 1.6em; font-size: 1.3rem; min-height: 1.6em; }
+  #log .empty { list-style: none; margin-left: -1.6em; color: var(--chalk-dim); }
+  #log b { color: var(--yellow); }
+
+  /* ===== Modals ===== */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.72); display: none; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+  .overlay.open { display: flex; }
+  .dialog { background: var(--chalk); color: var(--ink); border-radius: 18px; padding: 28px 32px; max-width: 700px; width: 100%; text-align: center; max-height: 94vh; overflow: auto; }
+  .dialog h2 { margin: 0 0 12px; font-size: 2rem; }
+  .dialog p { margin: 0 0 16px; }
+  .dialog input[type=text] { font: inherit; width: 100%; padding: 12px; border: 3px solid var(--ink); border-radius: 10px; margin-bottom: 8px; }
+  .dialog .err { color: #b00020; min-height: 1.4em; font-size: .85rem; margin: 0 0 8px; }
+  .dialog .row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .dialog button { background: var(--ink); color: var(--chalk); border-color: var(--ink); }
+  .dialog button.secondary { background: transparent; color: var(--ink); }
+  #endModal.lose .dialog { border: 8px solid var(--red); }
+  #endModal.win .dialog { border: 8px solid #2ea66b; }
+
+  /* ===== Results (pie chart) ===== */
+  #results .dialog { background: #fff; }
+  #pie { max-width: 100%; height: auto; }
+  #legend { list-style: none; margin: 8px 0 16px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: center; font-size: 1.1rem; }
+  #legend i { display: inline-block; width: 18px; height: 18px; border-radius: 4px; margin-right: 8px; vertical-align: -2px; border: 1px solid #000; }
+
+  /* ===== Print: only the results sheet, black on white ===== */
+  @media print {
+    body { background: #fff; color: #000; padding: 0; }
+    body > *:not(#results) { display: none !important; }
+    #results { position: static; display: block !important; background: #fff; padding: 0; }
+    #results .dialog { max-width: none; border: 0; box-shadow: none; overflow: visible; max-height: none; }
+    .no-print { display: none !important; }
+    #pie { max-width: 100%; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>The Silence Game</h1>
+  <div id="timer" role="timer" aria-label="Time remaining">45:00</div>
+  <div class="controls">
+    <button id="pauseBtn" type="button" disabled>Pause</button>
+    <button id="resetBtn" type="button" class="secondary">Reset</button>
+    <button id="printBtn" type="button" class="secondary">Print Results</button>
+  </div>
+</header>
+
+<main>
+  <div id="letters" role="group" aria-label="Letters of the secret word"></div>
+  <p class="hint">Click a letter (or press its key) when a student talks.</p>
+  <div id="stage">
+    <svg id="hangman" viewBox="0 0 220 250" role="img" aria-label="Hangman drawing">
+      <line x1="20" y1="238" x2="200" y2="238"/><line x1="50" y1="238" x2="50" y2="28"/>
+      <line x1="50" y1="28" x2="150" y2="28"/><line x1="150" y1="28" x2="150" y2="58"/>
+      <circle class="part" cx="150" cy="80" r="22"/>
+      <line class="part" x1="150" y1="102" x2="150" y2="168"/>
+      <line class="part" x1="150" y1="120" x2="120" y2="150"/>
+      <line class="part" x1="150" y1="120" x2="180" y2="150"/>
+      <line class="part" x1="150" y1="168" x2="125" y2="215"/>
+      <line class="part" x1="150" y1="168" x2="175" y2="215"/>
+      <g class="part face"><path d="M138 72l8 8M146 72l-8 8M154 72l8 8M162 72l-8 8M142 92q8-6 16 0"/></g>
+    </svg>
+  </div>
+</main>
+
+<section id="log-wrap" aria-labelledby="logTitle">
+  <h2 id="logTitle">Who talked</h2>
+  <ol id="log" role="log" aria-live="polite"></ol>
+</section>
+
+<!-- Start modal -->
+<div class="overlay" id="startModal" role="dialog" aria-modal="true" aria-labelledby="startTitle">
+  <div class="dialog">
+    <h2 id="startTitle">Ready for class?</h2>
+    <p>The 45-minute timer starts when you press the button.</p>
+    <div class="row"><button id="startBtn" type="button">Start 45:00</button></div>
+  </div>
+</div>
+
+<!-- Name modal -->
+<div class="overlay" id="nameModal" role="dialog" aria-modal="true" aria-labelledby="nameTitle">
+  <div class="dialog" id="nameForm">
+    <h2 id="nameTitle">Who talked?</h2>
+    <p id="nameLetterInfo"></p>
+    <input type="text" id="nameInput" maxlength="40" aria-label="Student name" placeholder="Student name">
+    <p class="err" id="nameErr" role="alert"></p>
+    <div class="row">
+      <button type="button" id="saveBtn">Save name</button>
+      <button type="button" id="undoBtn" class="secondary">Undo this mark</button>
+    </div>
+  </div>
+</div>
+
+<!-- Win / lose modal -->
+<div class="overlay" id="endModal" role="alertdialog" aria-modal="true" aria-labelledby="endTitle">
+  <div class="dialog">
+    <h2 id="endTitle"></h2>
+    <div class="row">
+      <button id="endResultsBtn" type="button">Print Results</button>
+      <button id="endResetBtn" type="button" class="secondary">Play again</button>
+    </div>
+  </div>
+</div>
+
+<!-- Results modal -->
+<div class="overlay" id="results" role="dialog" aria-modal="true" aria-labelledby="resultsTitle">
+  <div class="dialog">
+    <h2 id="resultsTitle">Silence Game Results</h2>
+    <p id="resultsSub"></p>
+    <canvas id="pie" width="680" height="440" aria-label="Pie chart of talking count per student"></canvas>
+    <ul id="legend"></ul>
+    <div class="row no-print">
+      <button type="button" id="doPrint">Print (Ctrl+P)</button>
+      <button type="button" id="closeResults" class="secondary">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============ 1. STATE ============ */
+const WORD = "SILENCE";
+const TOTAL_SECONDS = 45 * 60;
+const state = {
+  started: false, paused: false, over: false,
+  remaining: TOTAL_SECONDS,
+  marked: Array(WORD.length).fill(false),
+  log: [],              // { name, letter, index } in order
+  pending: null         // tile index waiting for a student name
+};
+const $ = (id) => document.getElementById(id);
+
+/* ============ 2. TIMER ============ */
+let lastTick = Date.now();
+const isRunning = () => state.started && !state.paused && !state.over && state.pending === null;
+
+function formatTime(sec) {
+  const s = Math.max(0, Math.ceil(sec));
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+function renderTimer() {
+  const t = $("timer");
+  t.textContent = formatTime(state.remaining);
+  t.classList.toggle("low", state.remaining <= 300 && !state.over);
+  t.classList.toggle("paused", state.paused && !state.over);
+}
+function tick() {
+  const now = Date.now();
+  if (isRunning()) {
+    state.remaining -= (now - lastTick) / 1000;
+    if (state.remaining <= 0) { state.remaining = 0; renderTimer(); endGame("win"); lastTick = now; return; }
+  }
+  lastTick = now;
+  renderTimer();
+}
+setInterval(tick, 250);
+
+function togglePause() {
+  if (!state.started || state.over) return;
+  state.paused = !state.paused;
+  $("pauseBtn").textContent = state.paused ? "Resume" : "Pause";
+  lastTick = Date.now();
+  renderTimer();
+}
+
+/* ============ 3. LETTERS ============ */
+function buildTiles() {
+  const box = $("letters");
+  box.innerHTML = "";
+  [...WORD].forEach((ch, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "tile"; b.textContent = ch; b.dataset.i = i;
+    b.setAttribute("aria-label", `Letter ${ch}, position ${i + 1}`);
+    b.addEventListener("click", () => markLetter(i));
+    box.appendChild(b);
+  });
+}
+function markLetter(i) {
+  // Guards: no double-marking, no clicks when stopped/paused/over/waiting for a name
+  if (state.marked[i] || state.over || !state.started || state.paused || state.pending !== null) return;
+  state.marked[i] = true;
+  state.pending = i;
+  renderTiles(); renderHangman();
+  openNameModal(i);
+}
+function renderTiles() {
+  document.querySelectorAll(".tile").forEach((t) => {
+    const i = +t.dataset.i, m = state.marked[i];
+    t.classList.toggle("marked", m);
+    t.setAttribute("aria-label", `Letter ${WORD[i]}, position ${i + 1}${m ? ", marked" : ""}`);
+  });
+}
+
+/* ============ 4. HANGMAN DRAWING (one part per marked letter) ============ */
+function renderHangman() {
+  const count = state.marked.filter(Boolean).length;
+  document.querySelectorAll("#hangman .part").forEach((p, idx) => p.classList.toggle("show", idx < count));
+}
+
+/* ============ 5. MODALS ============ */
+let lastFocus = null;
+function openOverlay(id, focusId) {
+  lastFocus = document.activeElement;
+  $(id).classList.add("open");
+  if (focusId) setTimeout(() => $(focusId).focus(), 0);
+}
+function closeOverlay(id) {
+  $(id).classList.remove("open");
+  if (lastFocus && lastFocus.focus && document.contains(lastFocus)) lastFocus.focus();
+}
+const anyOpen = () => document.querySelector(".overlay.open") !== null;
+
+function openNameModal(i) {
+  $("nameLetterInfo").textContent = `Letter marked: ${WORD[i]} (position ${i + 1})`;
+  $("nameInput").value = ""; $("nameErr").textContent = "";
+  openOverlay("nameModal", "nameInput");
+}
+function saveName() {
+  const name = $("nameInput").value.trim();
+  if (!name) { $("nameErr").textContent = "Please type a student name."; return; }
+  const i = state.pending;
+  state.log.push({ name, letter: WORD[i], index: i });
+  state.pending = null;
+  lastFocus = null;
+  $("nameModal").classList.remove("open");
+  renderLog();
+  lastTick = Date.now();
+  if (state.marked.every(Boolean)) endGame("lose");
+}
+$("saveBtn").addEventListener("click", saveName);
+$("nameInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveName(); } });
+function undoMark() { // cancels the current mark if the click was a mistake
+  const i = state.pending;
+  if (i === null) return;
+  state.marked[i] = false; state.pending = null;
+  renderTiles(); renderHangman();
+  closeOverlay("nameModal");
+  lastTick = Date.now();
+}
+$("undoBtn").addEventListener("click", undoMark);
+
+function endGame(result) {
+  if (state.over) return;
+  state.over = true;
+  $("pauseBtn").disabled = true;
+  $("endModal").className = "overlay " + result;
+  $("endTitle").textContent = result === "lose"
+    ? "You lose, be quieter next class."
+    : "You've won! Keep this winning streak going for the next class.";
+  renderTimer();
+  openOverlay("endModal", "endResetBtn");
+}
+
+/* ============ 6. NAME LIST ============ */
+function renderLog() {
+  const ol = $("log");
+  ol.innerHTML = "";
+  if (!state.log.length) {
+    const li = document.createElement("li");
+    li.className = "empty"; li.textContent = "Nobody yet. Keep it up!";
+    ol.appendChild(li); return;
+  }
+  state.log.forEach((e) => {
+    const li = document.createElement("li");
+    li.appendChild(document.createTextNode(e.name + " - Letter "));
+    const b = document.createElement("b"); b.textContent = e.letter;
+    li.appendChild(b); ol.appendChild(li);
+  });
+}
+
+/* ============ 7. PIE CHART (canvas, no libraries) ============ */
+const COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#008080", "#9a6324", "#808000"];
+
+function tallyNames() { // case-insensitive grouping, keeps first spelling
+  const map = new Map();
+  state.log.forEach((e) => {
+    const k = e.name.toLowerCase();
+    if (!map.has(k)) map.set(k, { name: e.name, count: 0 });
+    map.get(k).count++;
+  });
+  return [...map.values()];
+}
+function drawPie() {
+  const c = $("pie"), g = c.getContext("2d"), W = c.width, H = c.height;
+  const data = tallyNames(), total = state.log.length;
+  g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
+  g.font = "bold 20px Trebuchet MS, Verdana, sans-serif"; g.textBaseline = "middle";
+  const cx = W / 2, cy = H / 2, r = 140;
+  const legend = $("legend"); legend.innerHTML = "";
+  $("resultsSub").textContent = `Total times students talked: ${total} of ${WORD.length}`;
+  if (!total) {
+    g.fillStyle = "#000"; g.textAlign = "center";
+    g.fillText("No one talked. Great job, class!", cx, cy);
+    return;
+  }
+  let a = -Math.PI / 2;
+  data.forEach((d, i) => {
+    const sweep = (d.count / total) * Math.PI * 2, color = COLORS[i % COLORS.length];
+    g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, r, a, a + sweep); g.closePath();
+    g.fillStyle = color; g.fill(); g.lineWidth = 3; g.strokeStyle = "#fff"; g.stroke();
+    // label outside the slice: "Name (count)"
+    const mid = a + sweep / 2, lx = cx + Math.cos(mid) * (r + 16), ly = cy + Math.sin(mid) * (r + 16);
+    g.fillStyle = "#000"; g.textAlign = Math.cos(mid) >= 0 ? "left" : "right";
+    g.fillText(`${d.name} (${d.count})`, lx, ly, 190);
+    const li = document.createElement("li");
+    const sw = document.createElement("i"); sw.style.background = color;
+    li.appendChild(sw); li.appendChild(document.createTextNode(`${d.name}: ${d.count}`));
+    legend.appendChild(li);
+    a += sweep;
+  });
+}
+function openResults() { drawPie(); openOverlay("results", "doPrint"); }
+
+/* ============ 8. PRINT ============ */
+$("doPrint").addEventListener("click", () => window.print());
+$("closeResults").addEventListener("click", () => closeOverlay("results"));
+$("printBtn").addEventListener("click", openResults);
+$("endResultsBtn").addEventListener("click", openResults);
+
+/* ============ 9. RESET AND START ============ */
+function resetGame() {
+  Object.assign(state, { started: false, paused: false, over: false, remaining: TOTAL_SECONDS, pending: null });
+  state.marked = Array(WORD.length).fill(false);
+  state.log = [];
+  document.querySelectorAll(".overlay").forEach((o) => o.classList.remove("open"));
+  $("pauseBtn").textContent = "Pause"; $("pauseBtn").disabled = true;
+  renderTiles(); renderHangman(); renderLog(); renderTimer();
+  openOverlay("startModal", "startBtn");
+}
+function startGame() {
+  state.started = true; lastTick = Date.now();
+  $("pauseBtn").disabled = false;
+  closeOverlay("startModal");
+}
+$("startBtn").addEventListener("click", startGame);
+$("pauseBtn").addEventListener("click", togglePause);
+$("resetBtn").addEventListener("click", resetGame);
+$("endResetBtn").addEventListener("click", resetGame);
+
+/* ============ 10. KEYBOARD ============ */
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if ($("nameModal").classList.contains("open")) undoMark();
+    else if ($("results").classList.contains("open")) closeOverlay("results");
+    return;
+  }
+  if (anyOpen() || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+  const ch = e.key.toUpperCase();
+  if (ch === " " ) return;                              // Space keeps its normal button behavior
+  const i = [...WORD].findIndex((l, idx) => l === ch && !state.marked[idx]);
+  if (i >= 0) markLetter(i);                            // typing a letter marks its first unmarked tile
+});
+
+/* ============ INIT ============ */
+buildTiles();
+resetGame();
+</script>
+</body>
+</html>
